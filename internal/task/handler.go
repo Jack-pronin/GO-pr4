@@ -4,13 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
-)
-
-const (
-	minTitleLen = 3
-	maxTitleLen = 100
 )
 
 type Handler struct {
@@ -23,32 +19,53 @@ func NewHandler(repo *Repo) *Handler {
 
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Get("/", h.list)          // GET /tasks
-	r.Post("/", h.create)       // POST /tasks
-	r.Get("/{id}", h.get)       // GET /tasks/{id}
-	r.Put("/{id}", h.update)    // PUT /tasks/{id}
-	r.Delete("/{id}", h.delete) // DELETE /tasks/{id}
+	r.Get("/", h.list)
+	r.Post("/", h.create)
+	r.Get("/{id}", h.get)
+	r.Put("/{id}", h.update)
+	r.Delete("/{id}", h.delete)
 	return r
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+	pageStr := r.URL.Query().Get("page")
+	limitStr := r.URL.Query().Get("limit")
+	doneStr := r.URL.Query().Get("done")
 
-	page, _ := strconv.Atoi(q.Get("page"))
-	limit, _ := strconv.Atoi(q.Get("limit"))
-
+	page := 1
+	limit := 10
 	var done *bool
-	if v := q.Get("done"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			httpError(w, http.StatusBadRequest, "invalid done value")
-			return
+
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
 		}
-		done = &b
 	}
 
-	tasks := h.repo.ListFiltered(done, page, limit)
-	writeJSON(w, http.StatusOK, tasks)
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	if doneStr != "" {
+		if d, err := strconv.ParseBool(doneStr); err == nil {
+			done = &d
+		}
+	}
+
+	tasks, total := h.repo.GetWithPagination(page, limit, done)
+
+	response := map[string]interface{}{
+		"tasks": tasks,
+		"pagination": map[string]interface{}{
+			"page":  page,
+			"limit": limit,
+			"total": total,
+		},
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -70,9 +87,22 @@ type createReq struct {
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var req createReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-		len(req.Title) < minTitleLen || len(req.Title) > maxTitleLen {
-		httpError(w, http.StatusBadRequest, "title length must be 3..100")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	req.Title = strings.TrimSpace(req.Title)
+	if req.Title == "" {
+		httpError(w, http.StatusBadRequest, "title is required")
+		return
+	}
+	if len(req.Title) < 3 {
+		httpError(w, http.StatusUnprocessableEntity, "title must be at least 3 characters")
+		return
+	}
+	if len(req.Title) > 100 {
+		httpError(w, http.StatusUnprocessableEntity, "title must not exceed 100 characters")
 		return
 	}
 
@@ -91,9 +121,22 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-		len(req.Title) < minTitleLen || len(req.Title) > maxTitleLen {
-		httpError(w, http.StatusBadRequest, "title length must be 3..100")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	req.Title = strings.TrimSpace(req.Title)
+	if req.Title == "" {
+		httpError(w, http.StatusBadRequest, "title is required")
+		return
+	}
+	if len(req.Title) < 3 {
+		httpError(w, http.StatusUnprocessableEntity, "title must be at least 3 characters")
+		return
+	}
+	if len(req.Title) > 100 {
+		httpError(w, http.StatusUnprocessableEntity, "title must not exceed 100 characters")
 		return
 	}
 
@@ -116,8 +159,6 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// helpers
 
 func parseID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	raw := chi.URLParam(r, "id")

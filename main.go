@@ -13,7 +13,6 @@ import (
 
 func main() {
 	repo := task.NewRepo()
-	repo.Load()
 	h := task.NewHandler(repo)
 
 	r := chi.NewRouter()
@@ -26,7 +25,11 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
-	r.Route("/v1", func(v1 chi.Router) {
+	r.Route("/api", func(api chi.Router) {
+		api.Mount("/tasks", h.Routes())
+	})
+
+	r.Route("/api/v1", func(v1 chi.Router) {
 		v1.Mount("/tasks", h.Routes())
 	})
 
